@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
+import { useToast } from '../components/Toast';
 import { AssetDetailSkeleton } from '../components/Skeleton';
 import { createChart, CandlestickSeries } from 'lightweight-charts';
 
@@ -43,6 +44,7 @@ export default function AssetDetail() {
   const ticker = id || 'BANANA';
   const chartContainerRef = useRef(null);
   const { user, profile, refreshProfile } = useAuth();
+  const toast = useToast();
   
   const [interval, setChartInterval] = useState('5m');
   const [tradeMode, setTradeMode] = useState('buy');
@@ -62,7 +64,58 @@ export default function AssetDetail() {
   const balance = profile?.balance ?? 10000;
   const currentAssetPrice = asset ? Number(asset.current_price) : 0;
 
-  // Fetch asset info
+  // --- Shared data fetchers ---
+  const fetchChartData = async (assetId) => {
+    const { data } = await supabase
+      .from('price_history')
+      .select('*')
+      .eq('asset_id', assetId)
+      .order('timestamp', { ascending: true })
+      .limit(1000);
+
+    let rawData = [];
+    if (data && data.length > 0) {
+      rawData = data.map(d => ({
+        time: Math.floor(new Date(d.timestamp).getTime() / 1000),
+        open: Number(d.open), high: Number(d.high), low: Number(d.low), close: Number(d.close)
+      }));
+      rawData.sort((a, b) => a.time - b.time);
+      const deduped = [];
+      rawData.forEach(d => {
+        if (deduped.length > 0 && deduped[deduped.length - 1].time === d.time) {
+          const prev = deduped[deduped.length - 1];
+          prev.high = Math.max(prev.high, d.high);
+          prev.low = Math.min(prev.low, d.low);
+          prev.close = d.close;
+        } else {
+          deduped.push({ ...d });
+        }
+      });
+      rawData = deduped;
+    }
+    return rawData;
+  };
+
+  const fetchRecentTrades = async () => {
+    const { data } = await supabase
+      .from('trades')
+      .select('price, quantity, side, executed_at')
+      .eq('ticker', ticker)
+      .eq('side', 'buy')
+      .order('executed_at', { ascending: false })
+      .limit(40);
+    if (data) setRecentTrades(data);
+  };
+
+  const fetchOrderBook = async (assetId) => {
+    const { data, error } = await supabase.rpc('get_order_book', { p_asset_id: assetId });
+    if (!error && data) {
+      setAsks(data.asks || []);
+      setBids(data.bids || []);
+    }
+  };
+
+  // --- Initial data load ---
   useEffect(() => {
     const fetchAsset = async () => {
       const { data, error } = await supabase
@@ -78,140 +131,54 @@ export default function AssetDetail() {
       setLoading(false);
     };
     fetchAsset();
+  }, [ticker]);
 
-    // Realtime asset price updates
+  // --- Chart data fetch (depends on asset + interval) ---
+  useEffect(() => {
+    if (!asset) return;
+    const load = async () => {
+      const rawData = await fetchChartData(asset.id);
+      const aggregated = aggregateCandles(rawData, interval);
+      setChartData(padChartData(aggregated, interval === '1m' ? 60 : interval === '5m' ? 40 : interval === '1h' ? 24 : 30, interval));
+    };
+    load();
+  }, [asset, interval]);
+
+  // --- SINGLE unified realtime channel + order book polling ---
+  useEffect(() => {
+    if (!asset) return;
+
+    // Initial fetch
+    fetchRecentTrades();
+    fetchOrderBook(asset.id);
+
+    // ONE realtime channel for both asset price updates AND new trades
     const channel = supabase
-      .channel(`asset-${ticker}`)
+      .channel(`trax-live-${ticker}`)
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'assets', filter: `ticker=eq.${ticker}` }, (payload) => {
         setAsset(payload.new);
         if (orderType === 'Market') {
           setPrice(Number(payload.new.current_price).toFixed(2));
         }
       })
-      .subscribe();
-
-    return () => { supabase.removeChannel(channel); };
-  }, [ticker]);
-
-  // Fetch chart data from price_history
-  useEffect(() => {
-    if (!asset) return;
-
-    const fetchChart = async () => {
-      // Fetch ALL available price history for this asset (both seeded 5m and trade-generated 1m)
-      const { data, error } = await supabase
-        .from('price_history')
-        .select('*')
-        .eq('asset_id', asset.id)
-        .order('timestamp', { ascending: true })
-        .limit(1000);
-
-      let rawData = [];
-      if (!error && data && data.length > 0) {
-        // Convert all data to uniform format with unix timestamps
-        rawData = data.map(d => ({
-          time: Math.floor(new Date(d.timestamp).getTime() / 1000),
-          open: Number(d.open), high: Number(d.high), low: Number(d.low), close: Number(d.close)
-        }));
-
-        // Sort by time and deduplicate — if multiple entries share the same second, merge them
-        rawData.sort((a, b) => a.time - b.time);
-        const deduped = [];
-        rawData.forEach(d => {
-          if (deduped.length > 0 && deduped[deduped.length - 1].time === d.time) {
-            // Merge: keep earlier open, stretch high/low, use later close
-            const prev = deduped[deduped.length - 1];
-            prev.high = Math.max(prev.high, d.high);
-            prev.low = Math.min(prev.low, d.low);
-            prev.close = d.close;
-          } else {
-            deduped.push({ ...d });
-          }
-        });
-        rawData = deduped;
-      }
-      
-      // Aggregate into whichever interval the user selected
-      const aggregated = aggregateCandles(rawData, interval);
-      setChartData(padChartData(aggregated, interval === '1m' ? 60 : interval === '5m' ? 40 : interval === '1h' ? 24 : 30, interval));
-    };
-    fetchChart();
-  }, [asset, interval]);
-
-  // Fetch Recent Trades + Realtime subscription for trades & chart refresh
-  useEffect(() => {
-    if (!asset) return;
-
-    const fetchRecentTrades = async () => {
-      const { data } = await supabase
-        .from('trades')
-        .select('price, quantity, side, executed_at')
-        .eq('ticker', ticker)
-        .eq('side', 'buy') /* Only grab one leg to avoid duplicates */
-        .order('executed_at', { ascending: false })
-        .limit(20);
-      if (data) setRecentTrades(data);
-    };
-    fetchRecentTrades();
-
-    // Live subscription: when ANY new trade for this asset comes in, refresh trades + chart
-    const tradeSub = supabase.channel(`trades-${ticker}`)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'trades', filter: `ticker=eq.${ticker}` }, () => {
         fetchRecentTrades();
-        // Also re-fetch chart data so new candle appears
-        const refetchChart = async () => {
-          const { data } = await supabase
-            .from('price_history')
-            .select('*')
-            .eq('asset_id', asset.id)
-            .order('timestamp', { ascending: true })
-            .limit(1000);
-          let rawData = [];
-          if (data && data.length > 0) {
-            rawData = data.map(d => ({
-              time: Math.floor(new Date(d.timestamp).getTime() / 1000),
-              open: Number(d.open), high: Number(d.high), low: Number(d.low), close: Number(d.close)
-            }));
-            // Sort and deduplicate
-            rawData.sort((a, b) => a.time - b.time);
-            const deduped = [];
-            rawData.forEach(d => {
-              if (deduped.length > 0 && deduped[deduped.length - 1].time === d.time) {
-                const prev = deduped[deduped.length - 1];
-                prev.high = Math.max(prev.high, d.high);
-                prev.low = Math.min(prev.low, d.low);
-                prev.close = d.close;
-              } else {
-                deduped.push({ ...d });
-              }
-            });
-            rawData = deduped;
-          }
+        // Refresh chart
+        const refresh = async () => {
+          const rawData = await fetchChartData(asset.id);
           const aggregated = aggregateCandles(rawData, interval);
           setChartData(padChartData(aggregated, interval === '1m' ? 60 : interval === '5m' ? 40 : interval === '1h' ? 24 : 30, interval));
         };
-        refetchChart();
+        refresh();
       })
       .subscribe();
 
-    const fetchOrderBook = async () => {
-      const { data, error } = await supabase.rpc('get_order_book', { p_asset_id: asset.id });
-      if (!error && data) {
-        setAsks(data.asks || []);
-        setBids(data.bids || []);
-      }
-    };
-    fetchOrderBook();
+    // Order book via polling (every 4s) instead of a dedicated realtime channel
+    const orderBookPoller = setInterval(() => fetchOrderBook(asset.id), 4000);
 
-    const orderSub = supabase.channel(`orders-${ticker}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders', filter: `ticker=eq.${ticker}` }, () => {
-        fetchOrderBook();
-      })
-      .subscribe();
-
-    return () => { 
-      supabase.removeChannel(tradeSub); 
-      supabase.removeChannel(orderSub); 
+    return () => {
+      supabase.removeChannel(channel);
+      clearInterval(orderBookPoller);
     };
   }, [asset, ticker, interval]);
 
@@ -288,6 +255,24 @@ export default function AssetDetail() {
     chartRef.current = chart;
     seriesRef.current = candleSeries;
 
+    // Persist chart zoom/pan state across page loads like Tracking View
+    let isScaleSubscribed = false;
+    const saveScaleHandler = (range) => {
+      if (range) localStorage.setItem(`trax_chart_time_${ticker}_${interval}`, JSON.stringify(range));
+    };
+
+    chart.timeScale().subscribeVisibleTimeRangeChange(saveScaleHandler);
+    isScaleSubscribed = true;
+
+    const savedTimeRange = localStorage.getItem(`trax_chart_time_${ticker}_${interval}`);
+    if (savedTimeRange) {
+      try {
+        const parsed = JSON.parse(savedTimeRange);
+        // We will apply this range AFTER the very first setData call in the other useEffect
+        chartContainer.dataset.savedRange = savedTimeRange; 
+      } catch(e) {}
+    }
+
     const handleResize = () => {
       if (chartContainer) chart.applyOptions({ width: chartContainer.clientWidth, height: chartContainer.clientHeight });
     };
@@ -295,6 +280,7 @@ export default function AssetDetail() {
 
     return () => {
       window.removeEventListener('resize', handleResize);
+      if (isScaleSubscribed) chart.timeScale().unsubscribeVisibleTimeRangeChange(saveScaleHandler);
       chart.remove();
       chartRef.current = null;
       seriesRef.current = null;
@@ -335,12 +321,21 @@ export default function AssetDetail() {
       });
     }
 
-    // Restore visible range if we had one
-    if (currentRange) {
+    // Restore visible range
+    const chartContainer = chartContainerRef.current;
+    if (chartContainer && chartContainer.dataset.savedRange) {
+      try {
+        const savedTimeRange = JSON.parse(chartContainer.dataset.savedRange);
+        chart.timeScale().setVisibleTimeRange(savedTimeRange);
+        delete chartContainer.dataset.savedRange; // Only apply on initial data load
+      } catch(e) {
+        if (currentRange) chart.timeScale().setVisibleLogicalRange(currentRange);
+      }
+    } else if (currentRange) {
       chart.timeScale().setVisibleLogicalRange(currentRange);
     }
 
-  }, [chartData, currentAssetPrice]);
+  }, [chartData, currentAssetPrice, ticker, interval]);
 
   const handleOrderTypeChange = (e) => {
     const type = e.target.value;
@@ -385,15 +380,23 @@ export default function AssetDetail() {
 
     if (error) {
       setTradeMsg({ type: 'error', text: error.message });
+      toast(error.message, 'error');
     } else if (data && !data.success) {
       setTradeMsg({ type: 'error', text: data.error });
+      toast(data.error, 'error');
     } else {
       if (data.status === 'FILLED') {
-        setTradeMsg({ type: 'success', text: `${orderType.toUpperCase()} order FILLED! ${numQty} ${ticker} @ ~₮${data.avg_price}` });
+        const msg = `${tradeMode.toUpperCase()} ${numQty} ${ticker} @ ₮${data.avg_price}`;
+        setTradeMsg({ type: 'success', text: msg });
+        toast(msg, 'success');
       } else if (data.status === 'PARTIAL') {
-        setTradeMsg({ type: 'success', text: `PARTIAL FILL! ${data.filled_qty} ${ticker} @ ~₮${data.avg_price}. Remaining: ${data.remaining_qty}` });
+        const msg = `PARTIAL ${data.filled_qty}/${numQty} ${ticker} @ ₮${data.avg_price}`;
+        setTradeMsg({ type: 'success', text: msg });
+        toast(msg, 'info');
       } else {
-        setTradeMsg({ type: 'success', text: `${orderType.toUpperCase()} order placed! Added to order book.` });
+        const msg = `${orderType} ${tradeMode.toUpperCase()} order placed!`;
+        setTradeMsg({ type: 'success', text: msg });
+        toast(msg, 'success');
       }
       setQty('');
       refreshProfile();
@@ -462,7 +465,7 @@ export default function AssetDetail() {
                         <div className="px-4 py-3 border-b border-[#1a1a1a]">
                             <h3 className="text-[11px] font-mono text-[#5a5650] uppercase tracking-widest font-semibold">Order Book</h3>
                         </div>
-                        <div className="flex-1 flex flex-col p-2 space-y-1 overflow-y-auto max-h-[300px]">
+                        <div className="flex-1 flex flex-col p-2 space-y-1 overflow-y-auto max-h-[350px]">
                             <div className="flex justify-between px-2 py-1 text-[10px] text-[#8a8580] uppercase font-medium">
                                 <span>Price</span><span>Qty</span>
                             </div>
@@ -508,7 +511,7 @@ export default function AssetDetail() {
                         <div className="px-4 py-3 border-b border-[#1a1a1a]">
                             <h3 className="text-[11px] font-mono text-[#5a5650] uppercase tracking-widest font-semibold">Recent Trades</h3>
                         </div>
-                        <div className="flex-1 flex flex-col p-2 space-y-1 overflow-y-auto max-h-[300px]">
+                        <div className="flex-1 flex flex-col p-2 space-y-1 overflow-y-auto max-h-[350px]">
                             <div className="grid grid-cols-3 px-2 py-1 text-[10px] text-[#8a8580] uppercase font-medium">
                                 <span className="text-left">Time</span><span className="text-center">Price</span><span className="text-right">Qty</span>
                             </div>
@@ -635,8 +638,16 @@ export default function AssetDetail() {
                     <h3 className="text-[11px] font-mono text-[#5a5650] uppercase tracking-widest font-semibold border-b border-[#1a1a1a] pb-3 mb-4">Asset Information</h3>
                     <div className="space-y-3 text-sm">
                         <div className="flex justify-between">
+                            <span className="text-[#8a8580]">Market Cap</span>
+                            <span className="font-mono text-[#d4af37]">₮{(Number(asset.current_price) * Number(asset.total_supply)).toLocaleString('en-US', {maximumFractionDigits: 0})}</span>
+                        </div>
+                        <div className="flex justify-between">
                             <span className="text-[#8a8580]">Total Supply</span>
                             <span className="font-mono text-[#f0ebe0]">{Number(asset.total_supply).toLocaleString()}</span>
+                        </div>
+                        <div className="flex justify-between">
+                            <span className="text-[#8a8580]">24h Volume</span>
+                            <span className="font-mono text-[#f0ebe0]">{Number(asset.volume_24h).toLocaleString()}</span>
                         </div>
                         <div className="flex justify-between">
                             <span className="text-[#8a8580]">IPO Price</span>

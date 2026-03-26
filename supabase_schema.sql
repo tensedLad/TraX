@@ -728,5 +728,118 @@ CREATE TRIGGER on_trade_metrics_update
 
 
 -- ============================================================
+-- 8. PROPOSALS & VOTES (Community-driven asset listing)
+-- ============================================================
+
+-- Proposals table
+CREATE TABLE IF NOT EXISTS public.proposals (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  proposer_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE NOT NULL,
+  asset_name TEXT NOT NULL,
+  ticker TEXT NOT NULL,
+  category TEXT DEFAULT 'Physical',
+  description TEXT,
+  ipo_price NUMERIC(15,2) NOT NULL,
+  total_supply INTEGER NOT NULL DEFAULT 100000,
+  votes INTEGER DEFAULT 0,
+  votes_needed INTEGER DEFAULT 50,
+  status TEXT DEFAULT 'ACTIVE', -- 'ACTIVE', 'APPROVED', 'REJECTED'
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+ALTER TABLE public.proposals ENABLE ROW LEVEL SECURITY;
+
+-- Everyone can read proposals
+CREATE POLICY "Proposals are viewable by everyone" ON public.proposals
+  FOR SELECT USING (true);
+
+-- Users can insert their own proposals
+CREATE POLICY "Users can create proposals" ON public.proposals
+  FOR INSERT WITH CHECK (auth.uid() = proposer_id);
+
+-- Allow updates (for vote incrementing via RPC SECURITY DEFINER)
+CREATE POLICY "Allow update proposals" ON public.proposals
+  FOR UPDATE USING (true);
+
+-- Votes table
+CREATE TABLE IF NOT EXISTS public.votes (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE NOT NULL,
+  proposal_id UUID REFERENCES public.proposals(id) ON DELETE CASCADE NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  UNIQUE(user_id, proposal_id) -- One vote per user per proposal
+);
+
+ALTER TABLE public.votes ENABLE ROW LEVEL SECURITY;
+
+-- Everyone can read votes
+CREATE POLICY "Votes are viewable by everyone" ON public.votes
+  FOR SELECT USING (true);
+
+-- Users can insert their own votes
+CREATE POLICY "Users can cast votes" ON public.votes
+  FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+
+-- ============================================================
+-- cast_vote RPC: Atomically insert vote + increment count
+-- ============================================================
+CREATE OR REPLACE FUNCTION public.cast_vote(
+  p_user_id UUID,
+  p_proposal_id UUID
+)
+RETURNS JSONB AS $$
+DECLARE
+  v_exists BOOLEAN;
+  v_new_votes INTEGER;
+  v_votes_needed INTEGER;
+  v_proposal RECORD;
+BEGIN
+  -- Check if already voted
+  SELECT EXISTS(
+    SELECT 1 FROM public.votes WHERE user_id = p_user_id AND proposal_id = p_proposal_id
+  ) INTO v_exists;
+
+  IF v_exists THEN
+    RETURN jsonb_build_object('success', false, 'error', 'Already voted');
+  END IF;
+
+  -- Insert the vote
+  INSERT INTO public.votes (user_id, proposal_id) VALUES (p_user_id, p_proposal_id);
+
+  -- Atomically increment vote count
+  UPDATE public.proposals
+  SET votes = votes + 1
+  WHERE id = p_proposal_id
+  RETURNING votes, votes_needed INTO v_new_votes, v_votes_needed;
+
+  -- Auto-approve if threshold reached
+  IF v_new_votes >= v_votes_needed THEN
+    UPDATE public.proposals SET status = 'APPROVED' WHERE id = p_proposal_id;
+
+    -- Fetch proposal details for auto-listing
+    SELECT * INTO v_proposal FROM public.proposals WHERE id = p_proposal_id;
+
+    -- Auto-create the asset
+    INSERT INTO public.assets (ticker, name, category, description, ipo_price, total_supply, current_price, status)
+    VALUES (
+      v_proposal.ticker,
+      v_proposal.asset_name,
+      v_proposal.category,
+      v_proposal.description,
+      v_proposal.ipo_price,
+      v_proposal.total_supply,
+      v_proposal.ipo_price,  -- initial price = IPO price
+      'IPO'
+    )
+    ON CONFLICT (ticker) DO NOTHING;
+  END IF;
+
+  RETURN jsonb_build_object('success', true, 'votes', v_new_votes);
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+
+-- ============================================================
 -- DONE! Your TraX database is ready.
 -- ============================================================

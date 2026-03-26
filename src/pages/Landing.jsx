@@ -1,7 +1,16 @@
 import { useNavigate } from 'react-router-dom';
+import { useEffect } from 'react';
+import { useAuth } from '../context/AuthContext';
 
 export default function Landing() {
   const navigate = useNavigate();
+  const { user } = useAuth();
+
+  useEffect(() => {
+    if (user) {
+      navigate('/market', { replace: true });
+    }
+  }, [user, navigate]);
 
   return (
     <div className="space-y-24 animate-fade-in">

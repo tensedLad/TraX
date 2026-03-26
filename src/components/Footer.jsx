@@ -21,16 +21,15 @@ export default function Footer() {
                 <div>
                     <h4 className="text-xs uppercase tracking-wider text-[#8a8580] font-medium mb-3">Resources</h4>
                     <div className="flex flex-col space-y-2">
-                        <a href="#" className="text-sm text-[#5a5650] hover:text-[#f0ebe0] transition-colors">How it Works</a>
-                        <a href="#" className="text-sm text-[#5a5650] hover:text-[#f0ebe0] transition-colors">API Docs</a>
-                        <a href="#" className="text-sm text-[#5a5650] hover:text-[#f0ebe0] transition-colors">FAQ</a>
+                        <Link to="/how-it-works" className="text-sm text-[#5a5650] hover:text-[#f0ebe0] transition-colors">How it Works</Link>
+                        <Link to="/faq" className="text-sm text-[#5a5650] hover:text-[#f0ebe0] transition-colors">FAQ</Link>
                     </div>
                 </div>
                 <div>
                     <h4 className="text-xs uppercase tracking-wider text-[#8a8580] font-medium mb-3">Legal</h4>
                     <div className="flex flex-col space-y-2">
-                        <a href="#" className="text-sm text-[#5a5650] hover:text-[#f0ebe0] transition-colors">Terms of Service</a>
-                        <a href="#" className="text-sm text-[#5a5650] hover:text-[#f0ebe0] transition-colors">Privacy Policy</a>
+                        <Link to="/terms" className="text-sm text-[#5a5650] hover:text-[#f0ebe0] transition-colors">Terms of Service</Link>
+                        <Link to="/privacy" className="text-sm text-[#5a5650] hover:text-[#f0ebe0] transition-colors">Privacy Policy</Link>
                     </div>
                 </div>
             </div>
@@ -38,7 +37,7 @@ export default function Footer() {
                 <span className="text-xs text-[#5a5650] font-mono">© 2026 TraX. All rights reserved.</span>
                 <div className="flex items-center space-x-4 mt-4 md:mt-0">
                     <a href="#" className="text-[#5a5650] hover:text-[#d4af37] transition-colors"><iconify-icon icon="mdi:twitter" class="text-lg"></iconify-icon></a>
-                    <a href="#" className="text-[#5a5650] hover:text-[#d4af37] transition-colors"><iconify-icon icon="mdi:github" class="text-lg"></iconify-icon></a>
+                    <a href="https://github.com/tensedLad/TraX" target="_blank" rel="noopener noreferrer" className="text-[#5a5650] hover:text-[#d4af37] transition-colors"><iconify-icon icon="mdi:github" class="text-lg"></iconify-icon></a>
                     <a href="#" className="text-[#5a5650] hover:text-[#d4af37] transition-colors"><iconify-icon icon="mdi:discord" class="text-lg"></iconify-icon></a>
                 </div>
             </div>

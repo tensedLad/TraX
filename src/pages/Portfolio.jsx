@@ -9,6 +9,7 @@ export default function Portfolio() {
   const { user, profile } = useAuth();
   const [holdings, setHoldings] = useState([]);
   const [orders, setOrders] = useState([]);
+  const [tradeHistory, setTradeHistory] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -32,6 +33,16 @@ export default function Portfolio() {
         .order('created_at', { ascending: false });
 
       if (ordersData) setOrders(ordersData);
+
+      // Fetch trade history (user's executed trades)
+      const { data: tradesData } = await supabase
+        .from('trades')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('executed_at', { ascending: false })
+        .limit(50);
+
+      if (tradesData) setTradeHistory(tradesData);
       setLoading(false);
     };
 
@@ -177,6 +188,49 @@ export default function Portfolio() {
                     )}
                 </div>
             </div>
+        </div>
+
+        {/* Trade History */}
+        <div className="space-y-4">
+            <h2 className="font-serif text-xl tracking-tight border-b border-[#1a1a1a] pb-2">Trade History</h2>
+            {tradeHistory.length === 0 ? (
+              <div className="bg-[#0f0f0f] border border-[#1a1a1a] rounded-xl p-8 text-center">
+                <p className="text-[#8a8580] text-sm">No trades executed yet.</p>
+              </div>
+            ) : (
+              <div className="bg-[#0f0f0f] border border-[#1a1a1a] rounded-xl overflow-hidden">
+                <table className="w-full text-left border-collapse">
+                    <thead>
+                        <tr className="text-xs text-[#8a8580] uppercase border-b border-[#1a1a1a]">
+                            <th className="p-4 font-medium">Time</th>
+                            <th className="p-4 font-medium">Ticker</th>
+                            <th className="p-4 font-medium">Side</th>
+                            <th className="p-4 font-medium text-right">Qty</th>
+                            <th className="p-4 font-medium text-right">Price</th>
+                            <th className="p-4 font-medium text-right">Total</th>
+                        </tr>
+                    </thead>
+                    <tbody className="text-sm">
+                        {tradeHistory.map(t => (
+                          <tr key={t.id} className="border-b border-[#1a1a1a] hover:bg-[#151515] transition-colors">
+                              <td className="p-4 font-mono text-[#8a8580] text-xs">
+                                {new Date(t.executed_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })}
+                              </td>
+                              <td className="p-4 font-mono text-[#d4af37]">{t.ticker}</td>
+                              <td className="p-4">
+                                <span className={`text-xs font-medium uppercase px-1.5 py-0.5 rounded ${t.side === 'sell' ? 'text-[#f87171] bg-[#f87171]/10' : 'text-[#4ade80] bg-[#4ade80]/10'}`}>
+                                  {t.side}
+                                </span>
+                              </td>
+                              <td className="p-4 text-right font-mono">{Number(t.quantity).toLocaleString()}</td>
+                              <td className="p-4 text-right font-mono">₮{Number(t.price).toFixed(2)}</td>
+                              <td className="p-4 text-right font-mono text-[#f0ebe0]">₮{(Number(t.quantity) * Number(t.price)).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
+                          </tr>
+                        ))}
+                    </tbody>
+                </table>
+              </div>
+            )}
         </div>
     </div>
   );

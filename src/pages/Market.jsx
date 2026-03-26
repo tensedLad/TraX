@@ -9,11 +9,11 @@ export default function Market() {
   const [searchTerm, setSearchTerm] = useState('');
   const [assets, setAssets] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [sortBy, setSortBy] = useState('Volume');
+  const [sortBy, setSortBy] = useState('Default (A-Z)');
   const [sortOpen, setSortOpen] = useState(false);
-  const sortOptions = ['Volume', 'Price (High-Low)', '% Change'];
+  const sortOptions = ['Default (A-Z)', 'Volume (High-Low)', 'Volume (Low-High)', 'Price (High-Low)', 'Price (Low-High)', '% Change', 'Mkt Cap'];
 
-  // Fetch assets from Supabase
+  // Fetch assets from Supabase with polling (saves realtime connections)
   useEffect(() => {
     const fetchAssets = async () => {
       const { data, error } = await supabase
@@ -28,20 +28,9 @@ export default function Market() {
     };
 
     fetchAssets();
-
-    // Subscribe to realtime updates on assets table
-    const channel = supabase
-      .channel('assets-realtime')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'assets' }, (payload) => {
-        if (payload.eventType === 'UPDATE') {
-          setAssets(prev => prev.map(a => a.id === payload.new.id ? payload.new : a));
-        } else if (payload.eventType === 'INSERT') {
-          setAssets(prev => [...prev, payload.new]);
-        }
-      })
-      .subscribe();
-
-    return () => { supabase.removeChannel(channel); };
+    // Polling every 5s instead of realtime WebSocket (Free Tier optimization)
+    const poller = setInterval(fetchAssets, 5000);
+    return () => clearInterval(poller);
   }, []);
 
   const getCatColor = (category) => {
@@ -69,9 +58,15 @@ export default function Market() {
       return matchesCat && matchesSearch;
     })
     .sort((a, b) => {
-      if (sortBy === 'Price (High-Low)') return Number(b.current_price) - Number(a.current_price);
-      if (sortBy === '% Change') return Math.abs(Number(b.change_24h)) - Math.abs(Number(a.change_24h));
-      return Number(b.volume_24h) - Number(a.volume_24h);
+      switch (sortBy) {
+        case 'Price (High-Low)': return Number(b.current_price) - Number(a.current_price);
+        case 'Price (Low-High)': return Number(a.current_price) - Number(b.current_price);
+        case 'Volume (High-Low)': return Number(b.volume_24h) - Number(a.volume_24h);
+        case 'Volume (Low-High)': return Number(a.volume_24h) - Number(b.volume_24h);
+        case '% Change': return Math.abs(Number(b.change_24h)) - Math.abs(Number(a.change_24h));
+        case 'Mkt Cap': return (Number(b.current_price) * Number(b.total_supply)) - (Number(a.current_price) * Number(a.total_supply));
+        default: return a.ticker.localeCompare(b.ticker);
+      }
     });
 
   const categoryCounts = {
@@ -139,11 +134,12 @@ export default function Market() {
           </div>
 
           {/* Asset List Header */}
-          <div className="hidden md:grid grid-cols-12 gap-4 px-4 py-2 text-xs text-[#8a8580] uppercase tracking-wider font-medium border-b border-[#1a1a1a]">
+          <div className="hidden md:grid grid-cols-14 gap-4 px-4 py-2 text-xs text-[#8a8580] uppercase tracking-wider font-medium border-b border-[#1a1a1a]" style={{gridTemplateColumns: 'repeat(14, minmax(0, 1fr))'}}>
               <div className="col-span-4">Asset</div>
               <div className="col-span-2 text-right">Price</div>
               <div className="col-span-2 text-right">24h Change</div>
               <div className="col-span-2 text-right">Volume</div>
+              <div className="col-span-2 text-right">Mkt Cap</div>
               <div className="col-span-2 text-right">Status</div>
           </div>
 
@@ -156,9 +152,9 @@ export default function Market() {
               <div 
                 key={asset.id}
                 onClick={() => navigate(`/asset/${asset.ticker}`)} 
-                className="group grid grid-cols-2 md:grid-cols-12 gap-4 items-center bg-[#0f0f0f] border border-[#1a1a1a] rounded-xl p-4 hover:bg-[#141414] hover:border-[#2a2a2a] transition-all duration-200 cursor-pointer"
+                className="group grid grid-cols-2 gap-4 items-center bg-[#0f0f0f] border border-[#1a1a1a] rounded-xl p-4 hover:bg-[#141414] hover:border-[#2a2a2a] transition-all duration-200 cursor-pointer md:grid-cols-none" style={{gridTemplateColumns: 'repeat(14, minmax(0, 1fr))'}}
               >
-                  <div className="col-span-2 md:col-span-4 flex items-center space-x-3">
+                  <div className="col-span-2 md:col-span-4 flex items-center space-x-3" style={{gridColumn: 'span 4 / span 4'}}>
                       <div className="w-10 h-10 rounded-lg bg-[#1a1a1a] flex items-center justify-center font-serif text-[#d4af37]">{asset.ticker[0]}</div>
                       <div>
                           <div className="flex items-center space-x-2">
@@ -173,6 +169,7 @@ export default function Market() {
                     {Number(asset.change_24h) >= 0 ? '+' : ''}{Number(asset.change_24h).toFixed(2)}%
                   </div>
                   <div className="text-right hidden md:block col-span-2 font-mono text-sm text-[#8a8580]">{formatVolume(Number(asset.volume_24h))}</div>
+                  <div className="text-right hidden md:block col-span-2 font-mono text-sm text-[#8a8580]">{formatVolume(Number(asset.current_price) * Number(asset.total_supply))}</div>
                   <div className="text-right hidden md:block col-span-2">
                     <span className={`text-[10px] px-1.5 py-0.5 rounded uppercase font-medium ${asset.status === 'ACTIVE' ? 'text-[#4ade80] bg-[#4ade80]/10' : 'text-[#d4af37] bg-[#d4af37]/10'}`}>
                       {asset.status}
