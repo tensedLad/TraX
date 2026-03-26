@@ -11,18 +11,28 @@ export default function Market() {
   const [loading, setLoading] = useState(true);
   const [sortBy, setSortBy] = useState('Default (A-Z)');
   const [sortOpen, setSortOpen] = useState(false);
+  const [fetchError, setFetchError] = useState(false);
   const sortOptions = ['Default (A-Z)', 'Volume (High-Low)', 'Volume (Low-High)', 'Price (High-Low)', 'Price (Low-High)', '% Change', 'Mkt Cap'];
 
   // Fetch assets from Supabase with polling (saves realtime connections)
   useEffect(() => {
+    let attempts = 0;
     const fetchAssets = async () => {
       const { data, error } = await supabase
         .from('assets')
         .select('*')
         .order('volume_24h', { ascending: false });
 
-      if (!error && data) {
+      if (!error && data && data.length > 0) {
         setAssets(data);
+        setFetchError(false);
+        attempts = 0;
+      } else {
+        attempts++;
+        // After 3 consecutive failures (~15s), show error state
+        if (attempts >= 3) {
+          setFetchError(true);
+        }
       }
       setLoading(false);
     };
@@ -75,6 +85,54 @@ export default function Market() {
     commodity: assets.filter(a => a.category === 'Commodity').length,
     meme: assets.filter(a => a.category === 'Meme Stock').length,
   };
+
+  if (fetchError && assets.length === 0) {
+    return (
+      <div className="min-h-[70vh] flex flex-col items-center justify-center text-center px-6 py-20 animate-fade-in">
+        <div className="relative mb-6">
+          <h1 className="text-[100px] md:text-[140px] font-mono font-black leading-none text-transparent bg-clip-text bg-gradient-to-b from-[#f87171] to-[#5a1a1a] opacity-90 select-none">
+            503
+          </h1>
+          <div className="absolute inset-0 flex items-center justify-center">
+            <div className="w-full h-[2px] bg-gradient-to-r from-transparent via-[#f87171]/40 to-transparent animate-pulse"></div>
+          </div>
+        </div>
+
+        <h2 className="text-2xl md:text-3xl font-serif italic text-[#f0ebe0] mb-3">
+          Exchange Temporarily Offline
+        </h2>
+        <p className="text-sm text-[#8a8580] max-w-md mb-2 leading-relaxed">
+          Our trading servers are currently experiencing heavy load or undergoing maintenance. Your portfolio and orders are safe.
+        </p>
+        <p className="text-xs text-[#5a5650] max-w-sm mb-8">
+          Please wait a moment and refresh the page. The virtual exchange engines will be back online shortly.
+        </p>
+
+        <div className="flex items-center gap-6 mb-10 text-[10px] font-mono uppercase tracking-widest text-[#5a5650]">
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-[#f87171] animate-pulse"></span>
+            <span>API Unreachable</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-[#d4af37] animate-pulse"></span>
+            <span>Auto-Retrying...</span>
+          </div>
+        </div>
+
+        <button
+          onClick={() => window.location.reload()}
+          className="px-8 py-3 bg-[#d4af37] text-[#0a0a0a] text-sm font-medium rounded-lg hover:bg-[#c9a42f] active:scale-[0.98] transition-all cursor-pointer"
+        >
+          Retry Connection
+        </button>
+
+        <div className="mt-16 w-full max-w-xs">
+          <div className="h-[1px] bg-gradient-to-r from-transparent via-[#1a1a1a] to-transparent mb-4"></div>
+          <p className="text-[10px] text-[#3a3630] font-mono tracking-widest">TRAX VIRTUAL EXCHANGE • SERVICE STATUS</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col md:flex-row gap-8 animate-fade-in">
