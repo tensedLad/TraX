@@ -16,6 +16,7 @@ import FAQ from './pages/FAQ';
 import Terms from './pages/Terms';
 import Privacy from './pages/Privacy';
 import NotFound from './pages/NotFound';
+import { Analytics } from '@vercel/analytics/react';
 
 // Automatically scrolls window to top on route change
 function ScrollToTop() {
@@ -50,6 +51,7 @@ function App() {
           </Route>
         </Routes>
       </Router>
+      <Analytics />
       </ToastProvider>
     </AuthProvider>
   );
