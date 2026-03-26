@@ -148,8 +148,21 @@ export default function Portfolio() {
                       <div className="p-6 text-center text-sm text-[#5a5650]">No open orders.</div>
                     ) : (
                       orders.map(o => (
-                        <div key={o.id} className="p-3 border border-[#1a1a1a] rounded-lg bg-[#0a0a0a]">
-                            <div className="flex justify-between items-start mb-2">
+                        <div key={o.id} className="p-3 border border-[#1a1a1a] rounded-lg bg-[#0a0a0a] relative group">
+                            <button
+                                onClick={async (e) => {
+                                    e.stopPropagation();
+                                    const { data } = await supabase.rpc('cancel_order', { p_user_id: user.id, p_order_id: o.id });
+                                    if (data && data.success) {
+                                      setOrders(prev => prev.filter(order => order.id !== o.id));
+                                    }
+                                }}
+                                className="absolute top-2 right-2 text-[#8a8580] hover:text-[#f87171] opacity-0 group-hover:opacity-100 transition-opacity"
+                                title="Cancel Order"
+                            >
+                                <iconify-icon icon="solar:close-circle-bold" class="text-xl"></iconify-icon>
+                            </button>
+                            <div className="flex justify-between items-start mb-2 pr-6">
                                 <div>
                                     <span className={`text-xs font-medium uppercase px-1.5 py-0.5 rounded ${o.side === 'sell' ? 'text-[#f87171] bg-[#f87171]/10' : 'text-[#4ade80] bg-[#4ade80]/10'}`}>{o.order_type} {o.side}</span>
                                     <span className="font-mono text-sm ml-2 text-[#d4af37]">{o.ticker}</span>

@@ -277,73 +277,270 @@ ALTER PUBLICATION supabase_realtime ADD TABLE public.votes;
 
 
 -- ==========================================
--- 11. HELPER FUNCTION: Execute a Trade
+-- 11. ORDER MATCHING ENGINE
 -- ==========================================
-CREATE OR REPLACE FUNCTION public.execute_market_order(
+
+-- Allow everyone to see PENDING limit orders (for order book display)
+CREATE POLICY "Everyone can view pending orders for order book" ON public.orders
+  FOR SELECT USING (status = 'PENDING' AND order_type = 'Limit');
+
+CREATE OR REPLACE FUNCTION public.get_order_book(p_asset_id UUID)
+RETURNS JSON AS $$
+DECLARE
+  v_asks JSON;
+  v_bids JSON;
+BEGIN
+  SELECT COALESCE(json_agg(json_build_object('p', a.price, 'q', a.total_qty) ORDER BY a.price ASC), '[]'::json)
+  INTO v_asks
+  FROM (
+    SELECT price, SUM(quantity)::NUMERIC AS total_qty
+    FROM public.orders
+    WHERE asset_id = p_asset_id AND side = 'sell' AND status = 'PENDING' AND order_type = 'Limit'
+    GROUP BY price
+    ORDER BY price ASC
+    LIMIT 15
+  ) a;
+
+  SELECT COALESCE(json_agg(json_build_object('p', b.price, 'q', b.total_qty) ORDER BY b.price DESC), '[]'::json)
+  INTO v_bids
+  FROM (
+    SELECT price, SUM(quantity)::NUMERIC AS total_qty
+    FROM public.orders
+    WHERE asset_id = p_asset_id AND side = 'buy' AND status = 'PENDING' AND order_type = 'Limit'
+    GROUP BY price
+    ORDER BY price DESC
+    LIMIT 15
+  ) b;
+
+  RETURN json_build_object('asks', v_asks, 'bids', v_bids);
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+
+CREATE OR REPLACE FUNCTION public.execute_order(
   p_user_id UUID,
   p_asset_id UUID,
   p_ticker TEXT,
+  p_order_type TEXT,
   p_side TEXT,
   p_quantity NUMERIC,
   p_price NUMERIC
 )
 RETURNS JSON AS $$
 DECLARE
-  v_total NUMERIC;
-  v_current_balance NUMERIC;
-  v_current_holding RECORD;
+  v_remaining NUMERIC := p_quantity;
+  v_total_cost NUMERIC := 0;
+  v_filled_qty NUMERIC := 0;
+  v_balance NUMERIC;
+  v_holding_qty NUMERIC;
+  v_order_id UUID;
+  v_counter RECORD;
+  v_fill_qty NUMERIC;
+  v_fill_price NUMERIC;
+  v_fill_total NUMERIC;
 BEGIN
-  v_total := p_quantity * p_price;
-
-  -- Get current balance
-  SELECT balance INTO v_current_balance FROM public.profiles WHERE id = p_user_id;
+  -- === PRE-VALIDATION ===
+  SELECT balance INTO v_balance FROM public.profiles WHERE id = p_user_id FOR UPDATE;
 
   IF p_side = 'buy' THEN
-    -- Check sufficient balance
-    IF v_current_balance < v_total THEN
-      RETURN json_build_object('success', false, 'error', 'Insufficient balance');
+    IF p_order_type = 'Limit' AND v_balance < p_quantity * p_price THEN
+      RETURN json_build_object('success', false, 'error', 'Insufficient balance. Need ₮' || ROUND(p_quantity * p_price, 2)::TEXT);
     END IF;
-
-    -- Deduct balance
-    UPDATE public.profiles SET balance = balance - v_total, total_trades = total_trades + 1, updated_at = now() WHERE id = p_user_id;
-
-    -- Update or insert holding
-    INSERT INTO public.holdings (user_id, asset_id, ticker, quantity, avg_buy_price)
-    VALUES (p_user_id, p_asset_id, p_ticker, p_quantity, p_price)
-    ON CONFLICT (user_id, asset_id)
-    DO UPDATE SET
-      avg_buy_price = (holdings.avg_buy_price * holdings.quantity + p_price * p_quantity) / (holdings.quantity + p_quantity),
-      quantity = holdings.quantity + p_quantity,
-      updated_at = now();
-
   ELSIF p_side = 'sell' THEN
-    -- Check sufficient holdings
-    SELECT * INTO v_current_holding FROM public.holdings WHERE user_id = p_user_id AND asset_id = p_asset_id;
-
-    IF v_current_holding IS NULL OR v_current_holding.quantity < p_quantity THEN
-      RETURN json_build_object('success', false, 'error', 'Insufficient holdings');
-    END IF;
-
-    -- Add balance
-    UPDATE public.profiles SET balance = balance + v_total, total_trades = total_trades + 1, updated_at = now() WHERE id = p_user_id;
-
-    -- Reduce holding
-    IF v_current_holding.quantity = p_quantity THEN
-      DELETE FROM public.holdings WHERE user_id = p_user_id AND asset_id = p_asset_id;
-    ELSE
-      UPDATE public.holdings SET quantity = quantity - p_quantity, updated_at = now() WHERE user_id = p_user_id AND asset_id = p_asset_id;
+    SELECT COALESCE(quantity, 0) INTO v_holding_qty
+    FROM public.holdings WHERE user_id = p_user_id AND asset_id = p_asset_id FOR UPDATE;
+    IF v_holding_qty IS NULL OR v_holding_qty < p_quantity THEN
+      RETURN json_build_object('success', false, 'error', 'Insufficient holdings. You have ' || COALESCE(v_holding_qty, 0)::TEXT || ' shares.');
     END IF;
   END IF;
 
-  -- Record the trade
-  INSERT INTO public.trades (user_id, asset_id, ticker, side, quantity, price, total)
-  VALUES (p_user_id, p_asset_id, p_ticker, p_side, p_quantity, p_price, v_total);
+  -- === RESERVE FOR LIMIT ORDERS ===
+  IF p_order_type = 'Limit' THEN
+    IF p_side = 'buy' THEN
+      UPDATE public.profiles SET balance = balance - (p_quantity * p_price), updated_at = now() WHERE id = p_user_id;
+    ELSIF p_side = 'sell' THEN
+      UPDATE public.holdings SET quantity = quantity - p_quantity, updated_at = now()
+      WHERE user_id = p_user_id AND asset_id = p_asset_id;
+      DELETE FROM public.holdings WHERE user_id = p_user_id AND asset_id = p_asset_id AND quantity <= 0;
+    END IF;
+  END IF;
 
-  -- Record the order
-  INSERT INTO public.orders (user_id, asset_id, ticker, order_type, side, quantity, price, total, status, filled_at)
-  VALUES (p_user_id, p_asset_id, p_ticker, 'Market', p_side, p_quantity, p_price, v_total, 'FILLED', now());
+  -- === CREATE ORDER ===
+  INSERT INTO public.orders (user_id, asset_id, ticker, order_type, side, quantity, price, total, status)
+  VALUES (p_user_id, p_asset_id, p_ticker, p_order_type, p_side, p_quantity, p_price, p_quantity * p_price, 'PENDING')
+  RETURNING id INTO v_order_id;
 
-  RETURN json_build_object('success', true, 'total', v_total, 'new_balance', v_current_balance - (CASE WHEN p_side = 'buy' THEN v_total ELSE -v_total END));
+  -- === MATCHING: BUY SIDE ===
+  IF p_side = 'buy' THEN
+    FOR v_counter IN
+      SELECT * FROM public.orders
+      WHERE asset_id = p_asset_id AND side = 'sell' AND status = 'PENDING'
+        AND order_type = 'Limit' AND id != v_order_id
+        AND (p_order_type = 'Market' OR price <= p_price)
+      ORDER BY price ASC, created_at ASC
+      FOR UPDATE
+    LOOP
+      EXIT WHEN v_remaining <= 0;
+      v_fill_qty := LEAST(v_remaining, v_counter.quantity);
+      v_fill_price := v_counter.price;
+      v_fill_total := v_fill_qty * v_fill_price;
+
+      IF p_order_type = 'Market' THEN
+        SELECT balance INTO v_balance FROM public.profiles WHERE id = p_user_id;
+        IF v_balance < v_fill_total THEN EXIT; END IF;
+        UPDATE public.profiles SET balance = balance - v_fill_total, total_trades = total_trades + 1, updated_at = now() WHERE id = p_user_id;
+      ELSE
+        IF v_fill_price < p_price THEN
+          UPDATE public.profiles SET balance = balance + v_fill_qty * (p_price - v_fill_price), updated_at = now() WHERE id = p_user_id;
+        END IF;
+        UPDATE public.profiles SET total_trades = total_trades + 1, updated_at = now() WHERE id = p_user_id;
+      END IF;
+
+      -- Seller gets paid
+      UPDATE public.profiles SET balance = balance + v_fill_total, total_trades = total_trades + 1, updated_at = now() WHERE id = v_counter.user_id;
+
+      -- Buyer gets holdings
+      INSERT INTO public.holdings (user_id, asset_id, ticker, quantity, avg_buy_price)
+      VALUES (p_user_id, p_asset_id, p_ticker, v_fill_qty, v_fill_price)
+      ON CONFLICT (user_id, asset_id) DO UPDATE SET
+        avg_buy_price = (holdings.avg_buy_price * holdings.quantity + v_fill_price * v_fill_qty) / (holdings.quantity + v_fill_qty),
+        quantity = holdings.quantity + v_fill_qty, updated_at = now();
+
+      -- Record trades
+      INSERT INTO public.trades (user_id, asset_id, ticker, side, quantity, price, total)
+      VALUES (p_user_id, p_asset_id, p_ticker, 'buy', v_fill_qty, v_fill_price, v_fill_total);
+      INSERT INTO public.trades (user_id, asset_id, ticker, side, quantity, price, total)
+      VALUES (v_counter.user_id, p_asset_id, p_ticker, 'sell', v_fill_qty, v_fill_price, v_fill_total);
+
+      -- Update counterparty order
+      IF v_fill_qty >= v_counter.quantity THEN
+        UPDATE public.orders SET status = 'FILLED', filled_at = now() WHERE id = v_counter.id;
+      ELSE
+        UPDATE public.orders SET quantity = quantity - v_fill_qty, total = (quantity - v_fill_qty) * price WHERE id = v_counter.id;
+      END IF;
+
+      v_remaining := v_remaining - v_fill_qty;
+      v_filled_qty := v_filled_qty + v_fill_qty;
+      v_total_cost := v_total_cost + v_fill_total;
+    END LOOP;
+
+  -- === MATCHING: SELL SIDE ===
+  ELSIF p_side = 'sell' THEN
+    FOR v_counter IN
+      SELECT * FROM public.orders
+      WHERE asset_id = p_asset_id AND side = 'buy' AND status = 'PENDING'
+        AND order_type = 'Limit' AND id != v_order_id
+        AND (p_order_type = 'Market' OR price >= p_price)
+      ORDER BY price DESC, created_at ASC
+      FOR UPDATE
+    LOOP
+      EXIT WHEN v_remaining <= 0;
+      v_fill_qty := LEAST(v_remaining, v_counter.quantity);
+      v_fill_price := v_counter.price;
+      v_fill_total := v_fill_qty * v_fill_price;
+
+      IF p_order_type = 'Market' THEN
+        UPDATE public.holdings SET quantity = quantity - v_fill_qty, updated_at = now()
+        WHERE user_id = p_user_id AND asset_id = p_asset_id;
+        UPDATE public.profiles SET balance = balance + v_fill_total, total_trades = total_trades + 1, updated_at = now() WHERE id = p_user_id;
+      ELSE
+        UPDATE public.profiles SET balance = balance + v_fill_total, total_trades = total_trades + 1, updated_at = now() WHERE id = p_user_id;
+      END IF;
+
+      -- Buyer gets holdings
+      UPDATE public.profiles SET total_trades = total_trades + 1, updated_at = now() WHERE id = v_counter.user_id;
+      INSERT INTO public.holdings (user_id, asset_id, ticker, quantity, avg_buy_price)
+      VALUES (v_counter.user_id, p_asset_id, p_ticker, v_fill_qty, v_fill_price)
+      ON CONFLICT (user_id, asset_id) DO UPDATE SET
+        avg_buy_price = (holdings.avg_buy_price * holdings.quantity + v_fill_price * v_fill_qty) / (holdings.quantity + v_fill_qty),
+        quantity = holdings.quantity + v_fill_qty, updated_at = now();
+
+      -- Record trades
+      INSERT INTO public.trades (user_id, asset_id, ticker, side, quantity, price, total)
+      VALUES (p_user_id, p_asset_id, p_ticker, 'sell', v_fill_qty, v_fill_price, v_fill_total);
+      INSERT INTO public.trades (user_id, asset_id, ticker, side, quantity, price, total)
+      VALUES (v_counter.user_id, p_asset_id, p_ticker, 'buy', v_fill_qty, v_fill_price, v_fill_total);
+
+      -- Update counterparty order
+      IF v_fill_qty >= v_counter.quantity THEN
+        UPDATE public.orders SET status = 'FILLED', filled_at = now() WHERE id = v_counter.id;
+      ELSE
+        UPDATE public.orders SET quantity = quantity - v_fill_qty, total = (quantity - v_fill_qty) * price WHERE id = v_counter.id;
+      END IF;
+
+      v_remaining := v_remaining - v_fill_qty;
+      v_filled_qty := v_filled_qty + v_fill_qty;
+      v_total_cost := v_total_cost + v_fill_total;
+    END LOOP;
+
+    IF p_order_type = 'Market' THEN
+      DELETE FROM public.holdings WHERE user_id = p_user_id AND asset_id = p_asset_id AND quantity <= 0;
+    END IF;
+  END IF;
+
+  -- === FINALIZE ORDER STATUS ===
+  IF v_remaining <= 0 THEN
+    UPDATE public.orders SET status = 'FILLED', filled_at = now() WHERE id = v_order_id;
+  ELSIF v_filled_qty > 0 THEN
+    IF p_order_type = 'Market' THEN
+      UPDATE public.orders SET status = 'PARTIAL', quantity = v_filled_qty, total = v_total_cost, filled_at = now() WHERE id = v_order_id;
+    ELSE
+      UPDATE public.orders SET quantity = v_remaining, total = v_remaining * p_price WHERE id = v_order_id;
+    END IF;
+  ELSE
+    IF p_order_type = 'Market' THEN
+      UPDATE public.orders SET status = 'CANCELLED' WHERE id = v_order_id;
+      IF p_side = 'buy' THEN
+        RETURN json_build_object('success', false, 'error', 'No sellers available. Place a limit sell order first to add liquidity.');
+      ELSE
+        RETURN json_build_object('success', false, 'error', 'No buyers available. Place a limit buy order first to add liquidity.');
+      END IF;
+    END IF;
+  END IF;
+
+  RETURN json_build_object(
+    'success', true,
+    'filled_qty', v_filled_qty,
+    'remaining_qty', GREATEST(v_remaining, 0),
+    'avg_price', CASE WHEN v_filled_qty > 0 THEN ROUND(v_total_cost / v_filled_qty, 2) ELSE 0 END,
+    'total_cost', ROUND(v_total_cost, 2),
+    'order_id', v_order_id,
+    'status', CASE
+      WHEN v_remaining <= 0 THEN 'FILLED'
+      WHEN v_filled_qty > 0 AND p_order_type = 'Market' THEN 'PARTIAL'
+      WHEN v_filled_qty > 0 THEN 'PARTIAL'
+      ELSE 'PENDING'
+    END
+  );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+
+CREATE OR REPLACE FUNCTION public.cancel_order(p_user_id UUID, p_order_id UUID)
+RETURNS JSON AS $$
+DECLARE
+  v_order RECORD;
+BEGIN
+  SELECT * INTO v_order FROM public.orders
+  WHERE id = p_order_id AND user_id = p_user_id AND status = 'PENDING'
+  FOR UPDATE;
+
+  IF v_order IS NULL THEN
+    RETURN json_build_object('success', false, 'error', 'Order not found or already filled/cancelled.');
+  END IF;
+
+  IF v_order.side = 'buy' THEN
+    UPDATE public.profiles SET balance = balance + (v_order.quantity * v_order.price), updated_at = now() WHERE id = p_user_id;
+  ELSIF v_order.side = 'sell' THEN
+    INSERT INTO public.holdings (user_id, asset_id, ticker, quantity, avg_buy_price)
+    VALUES (p_user_id, v_order.asset_id, v_order.ticker, v_order.quantity, v_order.price)
+    ON CONFLICT (user_id, asset_id) DO UPDATE SET
+      quantity = holdings.quantity + v_order.quantity, updated_at = now();
+  END IF;
+
+  UPDATE public.orders SET status = 'CANCELLED' WHERE id = p_order_id;
+
+  RETURN json_build_object('success', true);
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
@@ -435,7 +632,7 @@ CREATE OR REPLACE FUNCTION public.update_price_history_on_trade()
 RETURNS TRIGGER AS $$
 DECLARE
   v_current_minute TIMESTAMPTZ := date_trunc('minute', NEW.executed_at);
-  v_existing_id UUID;
+  v_existing_id BIGINT;
   v_open NUMERIC;
   v_high NUMERIC;
   v_low NUMERIC;

@@ -98,7 +98,7 @@ export default function AssetDetail() {
     if (!asset) return;
 
     const fetchChart = async () => {
-      // Fetch the raw granular data available for this asset
+      // Fetch ALL available price history for this asset (both seeded 5m and trade-generated 1m)
       const { data, error } = await supabase
         .from('price_history')
         .select('*')
@@ -108,12 +108,30 @@ export default function AssetDetail() {
 
       let rawData = [];
       if (!error && data && data.length > 0) {
+        // Convert all data to uniform format with unix timestamps
         rawData = data.map(d => ({
           time: Math.floor(new Date(d.timestamp).getTime() / 1000),
           open: Number(d.open), high: Number(d.high), low: Number(d.low), close: Number(d.close)
         }));
+
+        // Sort by time and deduplicate — if multiple entries share the same second, merge them
+        rawData.sort((a, b) => a.time - b.time);
+        const deduped = [];
+        rawData.forEach(d => {
+          if (deduped.length > 0 && deduped[deduped.length - 1].time === d.time) {
+            // Merge: keep earlier open, stretch high/low, use later close
+            const prev = deduped[deduped.length - 1];
+            prev.high = Math.max(prev.high, d.high);
+            prev.low = Math.min(prev.low, d.low);
+            prev.close = d.close;
+          } else {
+            deduped.push({ ...d });
+          }
+        });
+        rawData = deduped;
       }
       
+      // Aggregate into whichever interval the user selected
       const aggregated = aggregateCandles(rawData, interval);
       setChartData(padChartData(aggregated, interval === '1m' ? 60 : interval === '5m' ? 40 : interval === '1h' ? 24 : 30, interval));
     };
@@ -153,6 +171,20 @@ export default function AssetDetail() {
               time: Math.floor(new Date(d.timestamp).getTime() / 1000),
               open: Number(d.open), high: Number(d.high), low: Number(d.low), close: Number(d.close)
             }));
+            // Sort and deduplicate
+            rawData.sort((a, b) => a.time - b.time);
+            const deduped = [];
+            rawData.forEach(d => {
+              if (deduped.length > 0 && deduped[deduped.length - 1].time === d.time) {
+                const prev = deduped[deduped.length - 1];
+                prev.high = Math.max(prev.high, d.high);
+                prev.low = Math.min(prev.low, d.low);
+                prev.close = d.close;
+              } else {
+                deduped.push({ ...d });
+              }
+            });
+            rawData = deduped;
           }
           const aggregated = aggregateCandles(rawData, interval);
           setChartData(padChartData(aggregated, interval === '1m' ? 60 : interval === '5m' ? 40 : interval === '1h' ? 24 : 30, interval));
@@ -161,7 +193,25 @@ export default function AssetDetail() {
       })
       .subscribe();
 
-    return () => supabase.removeChannel(tradeSub);
+    const fetchOrderBook = async () => {
+      const { data, error } = await supabase.rpc('get_order_book', { p_asset_id: asset.id });
+      if (!error && data) {
+        setAsks(data.asks || []);
+        setBids(data.bids || []);
+      }
+    };
+    fetchOrderBook();
+
+    const orderSub = supabase.channel(`orders-${ticker}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders', filter: `ticker=eq.${ticker}` }, () => {
+        fetchOrderBook();
+      })
+      .subscribe();
+
+    return () => { 
+      supabase.removeChannel(tradeSub); 
+      supabase.removeChannel(orderSub); 
+    };
   }, [asset, ticker, interval]);
 
   // Generate mock candle data (fallback)
@@ -330,58 +380,36 @@ export default function AssetDetail() {
       setTradeMsg({ type: 'error', text: 'Enter a quantity greater than 0.' });
       return;
     }
-    if (tradeMode === 'buy' && total > balance) {
-      setTradeMsg({ type: 'error', text: 'Insufficient balance.' });
-      return;
-    }
 
     setTradeLoading(true);
     setTradeMsg(null);
 
-    if (orderType === 'Market') {
-      const { data, error } = await supabase.rpc('execute_market_order', {
-        p_user_id: user.id,
-        p_asset_id: asset.id,
-        p_ticker: ticker,
-        p_side: tradeMode,
-        p_quantity: numQty,
-        p_price: parseFloat(price),
-      });
+    const { data, error } = await supabase.rpc('execute_order', {
+      p_user_id: user.id,
+      p_asset_id: asset.id,
+      p_ticker: ticker,
+      p_order_type: orderType,
+      p_side: tradeMode,
+      p_quantity: numQty,
+      p_price: parseFloat(price) || currentAssetPrice
+    });
 
-      setTradeLoading(false);
+    setTradeLoading(false);
 
-      if (error) {
-        setTradeMsg({ type: 'error', text: error.message });
-      } else if (data && !data.success) {
-        setTradeMsg({ type: 'error', text: data.error });
-      } else {
-        setTradeMsg({ type: 'success', text: `MARKET order filled! ${numQty} ${ticker} @ ₮${parseFloat(price).toFixed(2)}` });
-        setQty('');
-        refreshProfile();
-      }
+    if (error) {
+      setTradeMsg({ type: 'error', text: error.message });
+    } else if (data && !data.success) {
+      setTradeMsg({ type: 'error', text: data.error });
     } else {
-      // Handle Limit & Stop Loss (Adds to Order Book as PENDING)
-      const { error } = await supabase.from('orders').insert({
-        user_id: user.id,
-        asset_id: asset.id,
-        ticker: ticker,
-        order_type: orderType,
-        side: tradeMode,
-        quantity: numQty,
-        price: parseFloat(price),
-        total: total,
-        status: 'PENDING'
-      });
-
-      setTradeLoading(false);
-
-      if (error) {
-        setTradeMsg({ type: 'error', text: error.message });
+      if (data.status === 'FILLED') {
+        setTradeMsg({ type: 'success', text: `${orderType.toUpperCase()} order FILLED! ${numQty} ${ticker} @ ~₮${data.avg_price}` });
+      } else if (data.status === 'PARTIAL') {
+        setTradeMsg({ type: 'success', text: `PARTIAL FILL! ${data.filled_qty} ${ticker} @ ~₮${data.avg_price}. Remaining: ${data.remaining_qty}` });
       } else {
         setTradeMsg({ type: 'success', text: `${orderType.toUpperCase()} order placed! Added to order book.` });
-        setQty('');
-        // No refreshProfile needed because pending orders don't immediately reduce accessible bal here
       }
+      setQty('');
+      refreshProfile();
     }
   };
 
@@ -494,14 +522,14 @@ export default function AssetDetail() {
                             <h3 className="text-[11px] font-mono text-[#5a5650] uppercase tracking-widest font-semibold">Recent Trades</h3>
                         </div>
                         <div className="flex-1 flex flex-col p-2 space-y-1 overflow-y-auto max-h-[300px]">
-                            <div className="flex justify-between px-2 py-1 text-[10px] text-[#8a8580] uppercase font-medium">
-                                <span>Time</span><span>Price</span><span>Qty</span>
+                            <div className="grid grid-cols-3 px-2 py-1 text-[10px] text-[#8a8580] uppercase font-medium">
+                                <span className="text-left">Time</span><span className="text-center">Price</span><span className="text-right">Qty</span>
                             </div>
                             {recentTrades.length > 0 ? recentTrades.map((t, i) => (
-                              <div key={i} className="flex justify-between px-2 py-1 text-xs font-mono rounded hover:bg-[#1a1a1a] transition-colors">
-                                  <span className="text-[#8a8580]">{new Date(t.executed_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })}</span>
-                                  <span className={t.side === 'buy' ? 'text-[#4ade80]' : 'text-[#f87171]'}>{Number(t.price).toFixed(2)}</span>
-                                  <span className="text-[#f0ebe0]">{Number(t.quantity).toLocaleString()}</span>
+                              <div key={i} className="grid grid-cols-3 px-2 py-1 text-xs font-mono rounded hover:bg-[#1a1a1a] transition-colors">
+                                  <span className="text-left text-[#8a8580]">{new Date(t.executed_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })}</span>
+                                  <span className={`text-center ${t.side === 'buy' ? 'text-[#4ade80]' : 'text-[#f87171]'}`}>{Number(t.price).toFixed(2)}</span>
+                                  <span className="text-right text-[#f0ebe0]">{Number(t.quantity).toLocaleString()}</span>
                               </div>
                             )) : (
                               <div className="py-8 text-center text-sm text-[#5a5650]">No trades yet. Be the first!</div>
