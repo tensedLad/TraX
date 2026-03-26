@@ -20,7 +20,7 @@ TraX/
 │   ├── components/    # Reusable UI components
 │   ├── context/       # Secure state management
 │   └── lib/           # Internal libraries (Supabase, Utils)
-├── public/           # Static assets and media resources
+├── public/            # Static assets and media resources
 ├── package.json       # Core engine dependencies
 ├── vite.config.js     # High-speed build configuration
 └── .env.example       # Environment blueprint
