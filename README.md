@@ -1,162 +1,59 @@
-# TradrX - Trading Platform
+# TraX — The High-Performance Trading Standard
 
-A full-stack cryptocurrency trading platform built with React, Node.js/Express, and MongoDB.
+**TraX** is a state-of-the-art cryptocurrency trading platform engineered for excellence. Designed with a premium dark-mode aesthetic and sub-second execution speed, TraX sets a new benchmark for modern trading experiences.
 
-## Features
+## ✨ Premium Experience
 
-- **User Authentication**: Secure registration and login with JWT
-- **Asset Listing**: Browse available cryptocurrency assets
-- **Trading Marketplace**: Buy and sell assets in real-time
-- **Portfolio Management**: Track your holdings and trading history
-- **Responsive Design**: Works seamlessly on desktop and mobile
+- **Institutional UI**: Highly optimized, dark-mode terminal for professional-grade focus.
+- **Universal Flow**: Secure, high-speed authentication powered by industry-standard JWT protocols.
+- **Real-Time Market Pulsar**: Advanced monitoring for global crypto assets with zero-latency updates.
+- **Precision Terminal**: Ultra-responsive order execution for maximum market control.
+- **Portfolio Nexus**: Comprehensive analytics for asset tracking and ROI management.
+- **Resilient Core**: A high-performance architecture that adapts seamlessly across all devices.
 
-## Project Structure
+## 🏗️ Technical Architecture
 
 ```
-TradrX/
-├── frontend/          # React frontend application
+TraX/
+├── frontend/          # State-of-the-art React frontend
 │   ├── src/
-│   │   ├── pages/     # Page components (Login, Register, Dashboard)
-│   │   ├── components/# Reusable components
-│   │   ├── store/     # Zustand state management
-│   │   ├── utils/     # Utilities (API client)
-│   │   └── App.js
+│   │   ├── pages/     # Premium layouts (Dashboard, Assets, Leaderboard)
+│   │   ├── components/# Reusable UI components
+│   │   ├── context/   # Secure state management
+│   │   └── lib/       # Internal libraries (Supabase, Utils)
 │   └── package.json
-│
-└── backend/           # Node.js/Express backend API
-    ├── src/
-    │   ├── routes/    # API routes (auth, assets, trades)
-    │   ├── models/    # MongoDB models (User, Asset, Trade)
-    │   ├── controllers/ # Route handlers
-    │   ├── middleware/  # Auth and other middleware
-    │   └── server.js
-    └── package.json
+└── ...
 ```
 
-## Getting Started
+## 🚀 Deployment & Setup
 
 ### Prerequisites
+- Node.js (v18+)
+- npm / yarn / pnpm
 
-- Node.js (v14 or higher)
-- npm or yarn
-- MongoDB (local or Atlas)
-
-### Backend Setup
-
-1. Navigate to the backend directory:
+### Launch Frontend
+1. **Initialize Engine**:
    ```bash
-   cd backend
-   ```
-
-2. Install dependencies:
-   ```bash
+   cd frontend
    npm install
    ```
 
-3. Create a `.env` file (copy from `.env.example`):
-   ```bash
-   cp .env.example .env
-   ```
-
-4. Update `.env` with your configuration (MongoDB URI, JWT secret)
-
-5. Start the backend server:
+2. **Run Dev Environment**:
    ```bash
    npm run dev
    ```
 
-The backend will run on `http://localhost:5000`
+### Environment Configuration
+Ensure your `.env` configuration is strictly isolated and adheres to the security protocols defined in `.env.example`.
 
-### Frontend Setup
+## 📜 Proprietary Notice & Legal Enforcement
 
-1. Navigate to the frontend directory:
-   ```bash
-   cd frontend
-   ```
+**© 2026 TraX. ALL RIGHTS RESERVED.**
 
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
+The software **"TraX"**, including its name, visual assets, source code, UI/UX architecture, and brand identity, is the exclusive property of its creators. No part of this repository may be copied, redistributed, modified, or used for any purpose, including educational or commercial use, without explicit, notarized written consent from the copyright owner.
 
-3. Create a `.env` file (copy from `.env.example`):
-   ```bash
-   cp .env.example .env
-   ```
+**UNAUTHORIZED USAGE OF THE "TraX" BRAND, ASSETS, OR CODEBASE WILL BE SUBJECT TO IMMEDIATE LEGAL ACTION AND COPYRIGHT INFRINGEMENT PENALTIES UNDER INTERNATIONAL IP LAW.**
 
-4. Start the development server:
-   ```bash
-   npm start
-   ```
+---
 
-The frontend will run on `http://localhost:3000`
-
-## API Endpoints
-
-### Authentication
-- `POST /api/auth/register` - Register a new user
-- `POST /api/auth/login` - Login user
-
-### Assets
-- `GET /api/assets` - Get all available assets
-- `GET /api/assets/:symbol` - Get specific asset details
-- `POST /api/assets` - Create new asset (admin)
-
-### Trades
-- `POST /api/trades` - Create a new trade (buy/sell)
-- `GET /api/trades` - Get user's trade history
-
-## Next Steps for v1
-
-- [ ] Add real-time price updates with WebSockets
-- [ ] Implement portfolio dashboard with charts
-- [ ] Add order history and detailed trade analytics
-- [ ] Build admin panel for asset management
-- [ ] Integrate Reddit API for community features
-- [ ] Add payment processing
-- [ ] Deploy to production (Heroku/AWS for backend, Vercel for frontend)
-
-## Development
-
-### Running Both Services
-
-In two separate terminals:
-
-**Terminal 1 (Backend):**
-```bash
-cd backend
-npm run dev
-```
-
-**Terminal 2 (Frontend):**
-```bash
-cd frontend
-npm start
-```
-
-## Testing
-
-Sample user credentials after seeding:
-- Email: test@example.com
-- Password: password123
-
-## Deployment
-
-### Backend (Heroku)
-1. Create a Heroku app
-2. Set environment variables
-3. Deploy using Git
-
-### Frontend (Vercel)
-1. Connect your repository to Vercel
-2. Deploy automatically on push
-
-## Contributing
-
-1. Create a feature branch
-2. Make your changes
-3. Submit a pull request
-
-## License
-
-MIT
+*Precision in every trade. Excellence in every line of code.*
