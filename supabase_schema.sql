@@ -698,11 +698,21 @@ CREATE TRIGGER on_trade_charted
 -- Automatically updates the asset's current price, high, and low when trades happen.
 CREATE OR REPLACE FUNCTION public.update_asset_metrics_on_trade()
 RETURNS TRIGGER AS $$
+DECLARE
+  v_ref_price NUMERIC;
 BEGIN
-  -- If we're starting fresh, high/low might need snapping to the first trade price
+  -- Get the reference price (either previous_price or ipo_price) to compute % change
+  SELECT COALESCE(previous_price, ipo_price) INTO v_ref_price 
+  FROM public.assets WHERE id = NEW.asset_id;
+
+  IF v_ref_price IS NULL OR v_ref_price = 0 THEN
+    v_ref_price := NEW.price;
+  END IF;
+
   UPDATE public.assets
   SET 
     current_price = NEW.price,
+    change_24h = ((NEW.price - v_ref_price) / v_ref_price) * 100,
     high_24h = CASE WHEN volume_24h = 0 THEN NEW.price ELSE GREATEST(high_24h, NEW.price) END,
     low_24h = CASE WHEN volume_24h = 0 THEN NEW.price ELSE LEAST(low_24h, NEW.price) END,
     volume_24h = volume_24h + NEW.quantity,

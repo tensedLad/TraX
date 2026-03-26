@@ -147,6 +147,7 @@ export default function AssetDetail() {
         .from('trades')
         .select('price, quantity, side, executed_at')
         .eq('ticker', ticker)
+        .eq('side', 'buy') /* Only grab one leg to avoid duplicates */
         .order('executed_at', { ascending: false })
         .limit(20);
       if (data) setRecentTrades(data);
@@ -247,112 +248,98 @@ export default function AssetDetail() {
     return [...padded, ...historicalData];
   };
 
-  // Draw Chart (TradingView Aesthetic)
+  const chartRef = useRef(null);
+  const seriesRef = useRef(null);
+
+  // Initialize Chart Instance Once
   useEffect(() => {
+    if (loading) return; // Ensure the Skeleton is gone and DOM node exists
+
     const chartContainer = chartContainerRef.current;
-    if (!chartContainer || chartData.length === 0) return;
+    if (!chartContainer) return;
 
-    // Clear previous charts
-    chartContainer.innerHTML = '';
-
+    chartContainer.innerHTML = ''; // Keep this only here on init
+    
     // Hide TradingView watermark via CSS
     const style = document.createElement('style');
     style.textContent = `
       .tv-lightweight-charts a[href*="tradingview"],
       .tv-lightweight-charts div[style*="tradingview"],
-      a[target="_blank"][href*="tradingview"] {
-        display: none !important;
-      }
+      a[target="_blank"][href*="tradingview"] { display: none !important; }
     `;
     chartContainer.appendChild(style);
 
     const chart = createChart(chartContainer, {
-      layout: {
-        background: { color: '#0f0f0f' },
-        textColor: '#8a8580',
-        fontFamily: "'JetBrains Mono', monospace",
-      },
-      grid: {
-        vertLines: { color: '#1a1a1a', style: 1 }, // dotted
-        horzLines: { color: '#1a1a1a', style: 1 }, // dotted
-      },
-      crosshair: {
-        mode: 1, // Magnet mode
-        vertLine: { width: 1, color: '#3d3a34', style: 0, labelBackgroundColor: '#d4af37' },
-        horzLine: { width: 1, color: '#3d3a34', style: 0, labelBackgroundColor: '#d4af37' },
-      },
-      timeScale: {
-        borderColor: '#1a1a1a',
-        timeVisible: true,
+      layout: { background: { color: '#0f0f0f' }, textColor: '#8a8580', fontFamily: "'JetBrains Mono', monospace" },
+      grid: { vertLines: { color: '#1a1a1a', style: 1 }, horzLines: { color: '#1a1a1a', style: 1 } },
+      crosshair: { mode: 1, vertLine: { width: 1, color: '#3d3a34', style: 0 }, horzLine: { width: 1, color: '#3d3a34', style: 0 } },
+      timeScale: { 
+        borderColor: '#1a1a1a', 
+        timeVisible: true, 
         secondsVisible: false,
       },
-      rightPriceScale: {
-        borderColor: '#1a1a1a',
-      },
+      rightPriceScale: { borderColor: '#1a1a1a' },
     });
 
     const candleSeries = chart.addSeries(CandlestickSeries, {
-      upColor: '#4ade80',
-      downColor: '#f87171',
-      borderVisible: false,
-      wickUpColor: '#4ade80',
-      wickDownColor: '#f87171',
+      upColor: '#4ade80', downColor: '#f87171', borderVisible: false, wickUpColor: '#4ade80', wickDownColor: '#f87171'
     });
 
-    // Make sure data is sorted by time and unique (Lightweight Charts requirement)
-    const uniqueTimeData = [];
-    const seenTimes = new Set();
-    chartData.forEach(d => {
-       if(!seenTimes.has(d.time)) {
-          seenTimes.add(d.time);
-          uniqueTimeData.push(d);
-       }
-    });
-
-    candleSeries.setData(uniqueTimeData);
-    
-    // Create Live Price Line Tracker
-    if (currentAssetPrice) {
-        candleSeries.createPriceLine({
-            price: currentAssetPrice,
-            color: currentAssetPrice >= (uniqueTimeData[0]?.open || 0) ? '#4ade80' : '#f87171',
-            lineWidth: 2,
-            lineStyle: 1, // Dotted
-            axisLabelVisible: true,
-            title: 'LIVE',
-        });
-    }
-
-    // Restore saved visible range from sessionStorage
-    const storageKey = `trax-chart-range-${ticker}-${interval}`;
-    try {
-      const saved = sessionStorage.getItem(storageKey);
-      if (saved) {
-        const range = JSON.parse(saved);
-        chart.timeScale().setVisibleRange(range);
-      }
-    } catch (e) { /* ignore parse errors */ }
-
-    // Save visible range on every zoom/scroll change
-    chart.timeScale().subscribeVisibleTimeRangeChange((newRange) => {
-      if (newRange) {
-        try {
-          sessionStorage.setItem(storageKey, JSON.stringify(newRange));
-        } catch (e) { /* ignore quota errors */ }
-      }
-    });
+    chartRef.current = chart;
+    seriesRef.current = candleSeries;
 
     const handleResize = () => {
-      if (chartContainer) {
-        chart.applyOptions({ width: chartContainer.clientWidth, height: chartContainer.clientHeight });
-      }
+      if (chartContainer) chart.applyOptions({ width: chartContainer.clientWidth, height: chartContainer.clientHeight });
     };
     window.addEventListener('resize', handleResize);
 
     return () => {
       window.removeEventListener('resize', handleResize);
       chart.remove();
+      chartRef.current = null;
+      seriesRef.current = null;
     };
+  }, [loading]); // Re-run when loading finishes and DOM is ready
+
+  // Update Data and Price Line
+  useEffect(() => {
+    if (!chartRef.current || !seriesRef.current || chartData.length === 0) return;
+
+    const chart = chartRef.current;
+    const candleSeries = seriesRef.current;
+
+    // Preserve logical visible range before updating
+    const currentRange = chart.timeScale().getVisibleLogicalRange();
+
+    const uniqueTimeData = [];
+    const seenTimes = new Set();
+    chartData.forEach(d => {
+       if(!seenTimes.has(d.time)) {
+          seenTimes.add(d.time);
+          uniqueTimeData.push({
+            time: d.time + new Date().getTimezoneOffset() * -60, // Convert UTC to Local Offset
+            open: d.open, high: d.high, low: d.low, close: d.close
+          });
+       }
+    });
+
+    candleSeries.setData(uniqueTimeData);
+
+    // Apply Price Line
+    if (currentAssetPrice) {
+      if (seriesRef.current.priceLine) candleSeries.removePriceLine(seriesRef.current.priceLine);
+      seriesRef.current.priceLine = candleSeries.createPriceLine({
+          price: currentAssetPrice,
+          color: currentAssetPrice >= (uniqueTimeData[0]?.open || 0) ? '#4ade80' : '#f87171',
+          lineWidth: 2, lineStyle: 1, axisLabelVisible: true, title: 'LIVE',
+      });
+    }
+
+    // Restore visible range if we had one
+    if (currentRange) {
+      chart.timeScale().setVisibleLogicalRange(currentRange);
+    }
+
   }, [chartData, currentAssetPrice]);
 
   const handleOrderTypeChange = (e) => {
@@ -525,13 +512,16 @@ export default function AssetDetail() {
                             <div className="grid grid-cols-3 px-2 py-1 text-[10px] text-[#8a8580] uppercase font-medium">
                                 <span className="text-left">Time</span><span className="text-center">Price</span><span className="text-right">Qty</span>
                             </div>
-                            {recentTrades.length > 0 ? recentTrades.map((t, i) => (
-                              <div key={i} className="grid grid-cols-3 px-2 py-1 text-xs font-mono rounded hover:bg-[#1a1a1a] transition-colors">
-                                  <span className="text-left text-[#8a8580]">{new Date(t.executed_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })}</span>
-                                  <span className={`text-center ${t.side === 'buy' ? 'text-[#4ade80]' : 'text-[#f87171]'}`}>{Number(t.price).toFixed(2)}</span>
-                                  <span className="text-right text-[#f0ebe0]">{Number(t.quantity).toLocaleString()}</span>
-                              </div>
-                            )) : (
+                            {recentTrades.length > 0 ? recentTrades.map((t, i) => {
+                                const isUp = i < recentTrades.length - 1 ? Number(t.price) >= Number(recentTrades[i+1].price) : true;
+                                return (
+                                  <div key={i} className="grid grid-cols-3 px-2 py-1 text-xs font-mono rounded hover:bg-[#1a1a1a] transition-colors">
+                                      <span className="text-left text-[#8a8580]">{new Date(t.executed_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })}</span>
+                                      <span className={`text-center ${isUp ? 'text-[#4ade80]' : 'text-[#f87171]'}`}>{Number(t.price).toFixed(2)}</span>
+                                      <span className="text-right text-[#f0ebe0]">{Number(t.quantity).toLocaleString()}</span>
+                                  </div>
+                                );
+                            }) : (
                               <div className="py-8 text-center text-sm text-[#5a5650]">No trades yet. Be the first!</div>
                             )}
                         </div>
