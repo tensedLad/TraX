@@ -15,6 +15,7 @@ import HowItWorks from './pages/HowItWorks';
 import FAQ from './pages/FAQ';
 import Terms from './pages/Terms';
 import Privacy from './pages/Privacy';
+import NotFound from './pages/NotFound';
 
 // Automatically scrolls window to top on route change
 function ScrollToTop() {
@@ -45,6 +46,7 @@ function App() {
             <Route path="faq" element={<FAQ />} />
             <Route path="terms" element={<Terms />} />
             <Route path="privacy" element={<Privacy />} />
+            <Route path="*" element={<NotFound />} />
           </Route>
         </Routes>
       </Router>
