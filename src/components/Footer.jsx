@@ -34,11 +34,17 @@ export default function Footer() {
                 </div>
             </div>
             <div className="flex flex-col md:flex-row justify-between items-center pt-8 border-t border-[#1a1a1a]">
-                <span className="text-xs text-[#5a5650] font-mono">© 2026 TraX. All rights reserved.</span>
-                <div className="flex items-center space-x-4 mt-4 md:mt-0">
-                    <a href="#" className="text-[#5a5650] hover:text-[#d4af37] transition-colors"><iconify-icon icon="mdi:twitter" class="text-lg"></iconify-icon></a>
-                    <a href="https://github.com/tensedLad/TraX" target="_blank" rel="noopener noreferrer" className="text-[#5a5650] hover:text-[#d4af37] transition-colors"><iconify-icon icon="mdi:github" class="text-lg"></iconify-icon></a>
-                    <a href="#" className="text-[#5a5650] hover:text-[#d4af37] transition-colors"><iconify-icon icon="mdi:discord" class="text-lg"></iconify-icon></a>
+                <div className="flex flex-col items-center md:items-start text-xs text-[#5a5650] max-w-2xl mb-4 md:mb-0">
+                   <p className="font-mono mb-2 text-[#f87171]/80 uppercase tracking-widest text-[10px]">Disclaimer: Virtual Market Simulation</p>
+                   <p className="text-justify leading-relaxed">TraX is a simulated, virtual trading platform created for educational and entertainment purposes only. The assets, prices, and trading features presented on this platform do not reflect real-world financial markets. No actual cryptocurrency or fiat currency is traded, deposited, or withdrawn. The platform holds zero financial value. Users should not consider this platform as financial advice or an alternative to real trading.</p>
+                </div>
+                <div className="flex flex-col items-center md:items-end space-y-4">
+                    <span className="text-xs text-[#5a5650] font-mono">© 2026 TraX Simulation.</span>
+                    <div className="flex items-center space-x-4">
+                        <a href="#" className="text-[#5a5650] hover:text-[#d4af37] transition-colors"><iconify-icon icon="mdi:twitter" class="text-lg"></iconify-icon></a>
+                        <a href="https://github.com/tensedLad/TraX" target="_blank" rel="noopener noreferrer" className="text-[#5a5650] hover:text-[#d4af37] transition-colors"><iconify-icon icon="mdi:github" class="text-lg"></iconify-icon></a>
+                        <a href="#" className="text-[#5a5650] hover:text-[#d4af37] transition-colors"><iconify-icon icon="mdi:discord" class="text-lg"></iconify-icon></a>
+                    </div>
                 </div>
             </div>
         </div>

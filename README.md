@@ -49,6 +49,16 @@ TraX/
 ### Environment Configuration
 Ensure your `.env` configuration is strictly isolated and adheres to the security protocols defined in `.env.example`.
 
+## ⚖️ Legal Disclaimer: Virtual Market Simulation
+
+> **IMPORTANT NOTICE:** TraX is a **simulated, virtual trading platform** created solely for educational and entertainment purposes. 
+> 
+> - **No Real Money:** The assets, prices, matching engines, and trading features presented on this platform **do not reflect real-world financial markets**. 
+> - **No Financial Value:** No actual cryptocurrency, fiat currency, or digital assets are traded, deposited, or withdrawn. The platform and its internal balances hold **zero financial value**.
+> - **No Financial Advice:** This platform is not a financial service, broker, or exchange. Its usage should not be considered financial advice or an alternative to real-world trading.
+> 
+> The creators of TraX assume no liability for any actions taken based on the use of this simulation.
+
 ## 📜 Proprietary Notice & Legal Enforcement
 
 **© 2026 TraX. ALL RIGHTS RESERVED.**
