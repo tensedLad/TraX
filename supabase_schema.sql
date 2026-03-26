@@ -841,5 +841,91 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 
 -- ============================================================
+-- STOP LOSS ENGINE: Auto-triggers when price drops to target
+-- ============================================================
+
+-- This function fires AFTER a trade is inserted.
+-- It checks if the trade price triggers any pending Stop Loss orders for the same asset.
+-- If yes, it executes them as market sells.
+CREATE OR REPLACE FUNCTION public.check_stop_losses()
+RETURNS TRIGGER AS $$
+DECLARE
+  v_stop RECORD;
+  v_holding_qty NUMERIC;
+  v_fill_qty NUMERIC;
+  v_fill_total NUMERIC;
+BEGIN
+  -- Only check stop losses when a trade happens (price changed)
+  FOR v_stop IN
+    SELECT * FROM public.orders
+    WHERE asset_id = NEW.asset_id
+      AND order_type = 'Stop Loss'
+      AND status = 'PENDING'
+      AND side = 'sell'
+      AND price >= NEW.price  -- Stop triggers when market price drops TO or BELOW stop price
+    ORDER BY price DESC  -- Execute highest stop prices first
+    FOR UPDATE
+  LOOP
+    -- Check if user still has holdings
+    SELECT COALESCE(quantity, 0) INTO v_holding_qty
+    FROM public.holdings
+    WHERE user_id = v_stop.user_id AND asset_id = v_stop.asset_id
+    FOR UPDATE;
+
+    IF v_holding_qty IS NULL OR v_holding_qty <= 0 THEN
+      -- No holdings left, cancel the stop loss
+      UPDATE public.orders SET status = 'CANCELLED' WHERE id = v_stop.id;
+      CONTINUE;
+    END IF;
+
+    -- Fill quantity is the lesser of ordered qty and available holdings
+    v_fill_qty := LEAST(v_stop.quantity, v_holding_qty);
+    v_fill_total := v_fill_qty * NEW.price;  -- Execute at current market price
+
+    -- Deduct holdings
+    UPDATE public.holdings
+    SET quantity = quantity - v_fill_qty, updated_at = now()
+    WHERE user_id = v_stop.user_id AND asset_id = v_stop.asset_id;
+
+    DELETE FROM public.holdings
+    WHERE user_id = v_stop.user_id AND asset_id = v_stop.asset_id AND quantity <= 0;
+
+    -- Credit balance
+    UPDATE public.profiles
+    SET balance = balance + v_fill_total,
+        total_trades = total_trades + 1,
+        updated_at = now()
+    WHERE id = v_stop.user_id;
+
+    -- Record the trade
+    INSERT INTO public.trades (user_id, asset_id, ticker, side, quantity, price, total)
+    VALUES (v_stop.user_id, v_stop.asset_id, v_stop.ticker, 'sell', v_fill_qty, NEW.price, v_fill_total);
+
+    -- Mark stop loss order as filled
+    UPDATE public.orders
+    SET status = 'FILLED', filled_at = now()
+    WHERE id = v_stop.id;
+
+    -- Send notification
+    INSERT INTO public.notifications (user_id, title, message, type)
+    VALUES (
+      v_stop.user_id,
+      'Stop Loss Triggered',
+      'Your stop loss on ' || v_stop.ticker || ' triggered at ₮' || ROUND(NEW.price, 2) || '. Sold ' || v_fill_qty || ' shares.',
+      'alert'
+    );
+  END LOOP;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Fire AFTER each trade is inserted
+CREATE TRIGGER on_trade_check_stop_losses
+  AFTER INSERT ON public.trades
+  FOR EACH ROW EXECUTE FUNCTION public.check_stop_losses();
+
+
+-- ============================================================
 -- DONE! Your TraX database is ready.
 -- ============================================================

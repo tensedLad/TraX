@@ -363,6 +363,16 @@ export default function AssetDetail() {
       return;
     }
 
+    // Stop Loss validation
+    if (orderType === 'Stop Loss') {
+      const triggerPrice = parseFloat(price);
+      if (!triggerPrice || triggerPrice >= currentAssetPrice) {
+        setTradeMsg({ type: 'error', text: `Trigger price must be below current price (₮${currentAssetPrice.toFixed(2)}).` });
+        toast(`Trigger price must be below ₮${currentAssetPrice.toFixed(2)}`, 'error');
+        return;
+      }
+    }
+
     setTradeLoading(true);
     setTradeMsg(null);
 
@@ -371,7 +381,7 @@ export default function AssetDetail() {
       p_asset_id: asset.id,
       p_ticker: ticker,
       p_order_type: orderType,
-      p_side: tradeMode,
+      p_side: orderType === 'Stop Loss' ? 'sell' : tradeMode,
       p_quantity: numQty,
       p_price: parseFloat(price) || currentAssetPrice
     });
@@ -550,8 +560,8 @@ export default function AssetDetail() {
 
                     {/* Buy/Sell Tabs */}
                     <div className="flex bg-[#0a0a0a] rounded-lg p-1 border border-[#1a1a1a] mb-6">
-                        <button onClick={() => setTradeMode('buy')} className={`flex-1 py-1.5 text-sm font-medium rounded-md transition-all ${tradeMode === 'buy' ? 'bg-[#1a1a1a] text-[#4ade80]' : 'text-[#8a8580] hover:text-[#4ade80]'}`}>Buy</button>
-                        <button onClick={() => setTradeMode('sell')} className={`flex-1 py-1.5 text-sm font-medium rounded-md transition-all ${tradeMode === 'sell' ? 'bg-[#1a1a1a] text-[#f87171]' : 'text-[#8a8580] hover:text-[#f87171]'}`}>Sell</button>
+                        <button onClick={() => { if (orderType !== 'Stop Loss') setTradeMode('buy'); }} className={`flex-1 py-1.5 text-sm font-medium rounded-md transition-all ${tradeMode === 'buy' ? 'bg-[#1a1a1a] text-[#4ade80]' : 'text-[#8a8580] hover:text-[#4ade80]'} ${orderType === 'Stop Loss' ? 'opacity-40 cursor-not-allowed' : ''}`}>Buy</button>
+                        <button onClick={() => { if (orderType !== 'Stop Loss') setTradeMode('sell'); }} className={`flex-1 py-1.5 text-sm font-medium rounded-md transition-all ${tradeMode === 'sell' ? 'bg-[#1a1a1a] text-[#f87171]' : 'text-[#8a8580] hover:text-[#f87171]'} ${orderType === 'Stop Loss' ? 'opacity-40 cursor-not-allowed' : ''}`}>Sell</button>
                     </div>
 
                     {/* Trade Messages */}
@@ -585,6 +595,10 @@ export default function AssetDetail() {
                                                         setOrderType(type);
                                                         setIsOrderTypeMenuOpen(false);
                                                         if (type === 'Market' && asset) setPrice(Number(asset.current_price).toFixed(2));
+                                                        if (type === 'Stop Loss') {
+                                                          setTradeMode('sell');
+                                                          setPrice((currentAssetPrice * 0.95).toFixed(2));
+                                                        }
                                                     }}
                                                     className={`w-full text-left px-4 py-2.5 text-sm transition-colors ${orderType === type ? 'bg-[#d4af37]/10 text-[#d4af37]' : 'text-[#8a8580] hover:bg-[#1a1a1a] hover:text-[#f0ebe0]'}`}
                                                 >
@@ -614,7 +628,10 @@ export default function AssetDetail() {
                         </div>
 
                         <div className={`${orderType === 'Market' ? 'opacity-50' : ''}`}>
-                            <label className="block text-xs text-[#8a8580] mb-1.5">Price (₮)</label>
+                            <label className="block text-xs text-[#8a8580] mb-1.5">{orderType === 'Stop Loss' ? 'Trigger Price (₮)' : 'Price (₮)'}</label>
+                            {orderType === 'Stop Loss' && (
+                              <p className="text-[10px] text-[#d4af37] mb-1.5">Auto-sells when price drops to this level</p>
+                            )}
                             <input type="number" value={price} onChange={(e) => setPrice(e.target.value)} disabled={orderType === 'Market'} className={`w-full bg-[#0a0a0a] border border-[#1a1a1a] text-[#f0ebe0] font-mono text-lg rounded-lg px-3 py-2 ${orderType === 'Market' ? 'cursor-not-allowed' : 'focus:outline-none focus:border-[#d4af37]'}`} />
                         </div>
 
@@ -623,8 +640,8 @@ export default function AssetDetail() {
                             <span className="font-mono text-lg text-[#f0ebe0]">₮{total.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
                         </div>
 
-                        <button onClick={executeTrade} disabled={tradeLoading} className={`w-full text-[#0a0a0a] font-medium py-3 rounded-lg active:scale-[0.98] transition-all disabled:opacity-50 ${tradeMode === 'buy' ? 'bg-[#4ade80] hover:bg-[#3ec773]' : 'bg-[#f87171] hover:bg-[#e05e5e]'}`}>
-                            {tradeLoading ? 'Processing...' : `Execute ${tradeMode === 'buy' ? 'Buy' : 'Sell'}`}
+                        <button onClick={executeTrade} disabled={tradeLoading} className={`w-full text-[#0a0a0a] font-medium py-3 rounded-lg active:scale-[0.98] transition-all disabled:opacity-50 ${orderType === 'Stop Loss' ? 'bg-[#f59e0b] hover:bg-[#d97706]' : tradeMode === 'buy' ? 'bg-[#4ade80] hover:bg-[#3ec773]' : 'bg-[#f87171] hover:bg-[#e05e5e]'}`}>
+                            {tradeLoading ? 'Processing...' : orderType === 'Stop Loss' ? 'Set Stop Loss' : `Execute ${tradeMode === 'buy' ? 'Buy' : 'Sell'}`}
                         </button>
 
                         <div className="text-center">

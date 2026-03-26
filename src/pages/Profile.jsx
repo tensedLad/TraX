@@ -44,10 +44,13 @@ export default function Profile() {
         .eq('user_id', user.id);
       
       if (holdingsData) {
-         // Calculate percentages based on total portfolio value
-         const totalVal = holdingsData.reduce((sum, h) => sum + (h.quantity * (h.assets?.current_price || 0)), 0);
-         const processed = holdingsData.map(h => ({
+         // Filter out zero/near-zero holdings
+         const validHoldings = holdingsData.filter(h => h.quantity > 0.001);
+         const totalVal = validHoldings.reduce((sum, h) => sum + (h.quantity * (h.assets?.current_price || 0)), 0);
+         const processed = validHoldings.map(h => ({
             ticker: h.ticker,
+            value: (h.quantity * (h.assets?.current_price || 0)),
+            quantity: Number(h.quantity),
             percentage: totalVal > 0 ? ((h.quantity * (h.assets?.current_price || 0)) / totalVal * 100).toFixed(1) : 0,
          })).sort((a,b) => b.percentage - a.percentage);
          setHoldings(processed);
@@ -136,6 +139,8 @@ export default function Profile() {
             {holdings.map((h, i) => (
               <div key={i} className="flex items-center gap-3 px-4 py-2 border border-[#1a1a1a] rounded-full text-[11px] font-mono bg-transparent">
                  <span className="text-[#d4af37]">{h.ticker}</span>
+                 <span className="text-[#2a2a2a] leading-none mb-0.5">|</span>
+                 <span className="text-[#8a8580]">{h.quantity.toLocaleString()} shares</span>
                  <span className="text-[#2a2a2a] leading-none mb-0.5">|</span>
                  <span className="text-[#f0ebe0]">{h.percentage}%</span>
               </div>
