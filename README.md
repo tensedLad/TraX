@@ -15,14 +15,15 @@
 
 ```
 TraX/
-├── frontend/          # State-of-the-art React frontend
-│   ├── src/
-│   │   ├── pages/     # Premium layouts (Dashboard, Assets, Leaderboard)
-│   │   ├── components/# Reusable UI components
-│   │   ├── context/   # Secure state management
-│   │   └── lib/       # Internal libraries (Supabase, Utils)
-│   └── package.json
-└── ...
+├── src/               # State-of-the-art React frontend
+│   ├── pages/         # Premium layouts (Dashboard, Assets, Leaderboard)
+│   ├── components/    # Reusable UI components
+│   ├── context/       # Secure state management
+│   └── lib/           # Internal libraries (Supabase, Utils)
+├── public/           # Static assets and media resources
+├── package.json       # Core engine dependencies
+├── vite.config.js     # High-speed build configuration
+└── .env.example       # Environment blueprint
 ```
 
 ## 🚀 Deployment & Setup
@@ -31,10 +32,9 @@ TraX/
 - Node.js (v18+)
 - npm / yarn / pnpm
 
-### Launch Frontend
+### Quick Start
 1. **Initialize Engine**:
    ```bash
-   cd frontend
    npm install
    ```
 
