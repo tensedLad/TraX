@@ -1,6 +1,6 @@
 # TraX — The High-Performance Trading Standard
 
-**TraX** is a state-of-the-art cryptocurrency trading platform engineered for excellence. Designed with a premium dark-mode aesthetic and sub-second execution speed, TraX sets a new benchmark for modern trading experiences.
+**TraX** is a virtual stock exchange where you can trade anything — from bananas to trending internet memes — using virtual TraX Tokens (₮). Designed with a premium dark-mode aesthetic and sub-second execution speed, TraX sets a new benchmark for simulated trading experiences.
 
 ## ✨ Premium Experience
 

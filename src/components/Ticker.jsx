@@ -1,8 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 
 export default function Ticker() {
   const [assets, setAssets] = useState([]);
+  const assetsRef = useRef([]);
 
   useEffect(() => {
     const fetchAssets = async () => {
@@ -10,24 +11,38 @@ export default function Ticker() {
         .from('assets')
         .select('ticker, current_price, change_24h')
         .order('volume_24h', { ascending: false });
-      if (data) setAssets(data);
+      if (data) {
+        setAssets(data);
+        assetsRef.current = data;
+      }
     };
     fetchAssets();
 
-    // Realtime updates
-    const channel = supabase
-      .channel('ticker-prices')
+    // Listen to broadcast for live ticks (no DB reads!)
+    const broadcastChannel = supabase
+      .channel('trax-price-stream')
+      .on('broadcast', { event: 'price_tick' }, (msg) => {
+        const { ticker: tk, price } = msg.payload;
+        setAssets(prev => prev.map(a => a.ticker === tk ? { ...a, current_price: price } : a));
+      })
+      .subscribe();
+
+    // Also listen for DB updates (for change_24h recalculations)
+    const dbChannel = supabase
+      .channel('ticker-prices-db')
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'assets' }, (payload) => {
         setAssets(prev => prev.map(a => a.ticker === payload.new.ticker ? { ...a, ...payload.new } : a));
       })
       .subscribe();
 
-    return () => supabase.removeChannel(channel);
+    return () => {
+      supabase.removeChannel(broadcastChannel);
+      supabase.removeChannel(dbChannel);
+    };
   }, []);
 
   if (assets.length === 0) return null;
 
-  // Double the items for seamless loop
   const items = [...assets, ...assets];
 
   return (

@@ -38,9 +38,22 @@ export default function Market() {
     };
 
     fetchAssets();
-    // Polling every 5s instead of realtime WebSocket (Free Tier optimization)
-    const poller = setInterval(fetchAssets, 5000);
-    return () => clearInterval(poller);
+    // Polling every 10s for full data refresh (Free Tier optimization)
+    const poller = setInterval(fetchAssets, 10000);
+
+    // Broadcast channel for instant live price ticks between polls (no DB reads!)
+    const broadcastChannel = supabase
+      .channel('trax-price-stream-market')
+      .on('broadcast', { event: 'price_tick' }, (msg) => {
+        const { ticker: tk, price } = msg.payload;
+        setAssets(prev => prev.map(a => a.ticker === tk ? { ...a, current_price: price } : a));
+      })
+      .subscribe();
+
+    return () => {
+      clearInterval(poller);
+      supabase.removeChannel(broadcastChannel);
+    };
   }, []);
 
   const getCatColor = (category) => {
