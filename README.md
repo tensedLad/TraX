@@ -59,13 +59,25 @@ Ensure your `.env` configuration is strictly isolated and adheres to the securit
 > 
 > The creators of TraX assume no liability for any actions taken based on the use of this simulation.
 
-## 📜 Proprietary Notice & Legal Enforcement
+## 📜 License & Trademark
 
-**© 2026 TraX. ALL RIGHTS RESERVED.**
+This project is **open-source** under the [MIT License](./LICENSE). You are free to use, modify, and distribute the code.
 
-The software **"TraX"**, including its name, visual assets, source code, UI/UX architecture, and brand identity, is the exclusive property of its creators. No part of this repository may be copied, redistributed, modified, or used for any purpose, including educational or commercial use, without explicit, notarized written consent from the copyright owner.
+### ⚠️ Trademark Notice
 
-**UNAUTHORIZED USAGE OF THE "TraX" BRAND, ASSETS, OR CODEBASE WILL BE SUBJECT TO IMMEDIATE LEGAL ACTION AND COPYRIGHT INFRINGEMENT PENALTIES UNDER INTERNATIONAL IP LAW.**
+The **"TraX"** name, logo, brand identity, and visual assets are **not** covered by the MIT License. These remain the exclusive intellectual property of the original creators.
+
+You **may not**:
+- Use the "TraX" name or branding to promote or sell a derivative product.
+- Register, claim ownership of, or trademark the "TraX" name or any confusingly similar name.
+- Present a fork or derivative as the official TraX platform.
+
+You **may**:
+- Fork and modify the code for personal or educational use.
+- Contribute back to this repository via Pull Requests.
+- Build your own project using the codebase, under a **different name and branding**.
+
+**© 2026 TraX. The "TraX" brand and identity are protected.**
 
 ---
 
